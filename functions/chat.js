@@ -6,7 +6,7 @@ const openai = new OpenAI();
 // 環境変数からアシスタントIDを取得
 const ASSISTANT_ID = process.env.OPENAI_ASSISTANT_ID;
 
-exports.handler = async function (event, context) {
+export const handler = async function (event, context) {
     // POSTリクエスト以外は拒否
     if (event.httpMethod !== 'POST') {
         return {
