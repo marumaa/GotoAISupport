@@ -16,13 +16,36 @@ export const handler = async function (event, context) {
     }
 
     try {
-        const { message, sessionId, language } = JSON.parse(event.body);
+        // リクエストボディを解析
+        let body;
+        try {
+            body = JSON.parse(event.body);
+        } catch (parseError) {
+            console.error('Error parsing request body:', parseError);
+            return {
+                statusCode: 400,
+                body: JSON.stringify({ error: 'Invalid request body' })
+            };
+        }
+
+        const { message, sessionId, language } = body;
         if (!message) {
             return {
                 statusCode: 400,
                 body: JSON.stringify({ error: 'Message is required' })
             };
         }
+
+        // 環境変数の検証
+        if (!ASSISTANT_ID) {
+            console.error('OPENAI_ASSISTANT_ID environment variable is not set');
+            return {
+                statusCode: 500,
+                body: JSON.stringify({ error: 'Server configuration error' })
+            };
+        }
+
+        console.log(`Processing request: language=${language}, sessionId=${sessionId || 'new'}`);
 
         let threadId = sessionId;
         let thread;
@@ -34,7 +57,8 @@ export const handler = async function (event, context) {
                 threadId = thread.id;
                 console.log(`New thread created: ${threadId}`);
             } catch (error) {
-                console.error('Error creating thread:', error);
+                console.error('Error creating thread:', error.message);
+                console.error('Error details:', error.response?.data || 'No additional details');
                 return {
                     statusCode: 500,
                     body: JSON.stringify({ error: 'Failed to create conversation thread' })
@@ -45,14 +69,14 @@ export const handler = async function (event, context) {
                 thread = await openai.beta.threads.retrieve(threadId);
                 console.log(`Using existing thread: ${threadId}`);
             } catch (error) {
-                console.error(`Error retrieving thread ${threadId}:`, error);
+                console.error(`Error retrieving thread ${threadId}:`, error.message);
                 // スレッドが見つからない場合は新規作成
                 try {
                     thread = await openai.beta.threads.create();
                     threadId = thread.id;
                     console.log(`Thread ${sessionId} not found, created new one: ${threadId}`);
                 } catch (createError) {
-                    console.error('Error creating replacement thread:', createError);
+                    console.error('Error creating replacement thread:', createError.message);
                     return {
                         statusCode: 500,
                         body: JSON.stringify({ error: 'Failed to create conversation thread' })
@@ -70,8 +94,10 @@ export const handler = async function (event, context) {
                 role: 'user',
                 content: userMessageContent
             });
+            console.log(`Added user message to thread ${threadId}`);
         } catch (error) {
-            console.error('Error adding message to thread:', error);
+            console.error('Error adding message to thread:', error.message);
+            console.error('Error details:', error.response?.data || 'No additional details');
             return {
                 statusCode: 500,
                 body: JSON.stringify({ error: 'Failed to add message to conversation' })
@@ -84,8 +110,10 @@ export const handler = async function (event, context) {
             run = await openai.beta.threads.runs.create(threadId, {
                 assistant_id: ASSISTANT_ID
             });
+            console.log(`Created run ${run.id} for thread ${threadId}`);
         } catch (error) {
-            console.error('Error creating run:', error);
+            console.error('Error creating run:', error.message);
+            console.error('Error details:', error.response?.data || 'No additional details');
             return {
                 statusCode: 500,
                 body: JSON.stringify({ error: 'Failed to process your request' })
@@ -95,10 +123,11 @@ export const handler = async function (event, context) {
         // 実行完了を待つ
         let runStatus;
         let attempts = 0;
-        const maxAttempts = 60; // 最大60秒待機
+        const maxAttempts = 25; // 最大25秒待機
         
         try {
             runStatus = await openai.beta.threads.runs.retrieve(threadId, run.id);
+            console.log(`Initial run status: ${runStatus.status}`);
             
             // 応答待ち
             while (
@@ -108,6 +137,7 @@ export const handler = async function (event, context) {
                 await new Promise(resolve => setTimeout(resolve, 1000));
                 runStatus = await openai.beta.threads.runs.retrieve(threadId, run.id);
                 attempts++;
+                console.log(`Run status after ${attempts} seconds: ${runStatus.status}`);
             }
             
             // エラー状態の確認
@@ -119,7 +149,7 @@ export const handler = async function (event, context) {
                 throw new Error('Response timed out');
             }
         } catch (error) {
-            console.error('Error during run execution:', error);
+            console.error('Error during run execution:', error.message);
             return {
                 statusCode: 500,
                 body: JSON.stringify({ error: `Error processing message: ${error.message}` })
@@ -133,8 +163,10 @@ export const handler = async function (event, context) {
                 order: 'desc', // 最新のメッセージから取得
                 limit: 1 // 最新の1件だけ取得
             });
+            console.log('Retrieved final response');
         } catch (error) {
-            console.error('Error retrieving messages:', error);
+            console.error('Error retrieving messages:', error.message);
+            console.error('Error details:', error.response?.data || 'No additional details');
             return {
                 statusCode: 500,
                 body: JSON.stringify({ error: 'Failed to retrieve assistant response' })
@@ -170,6 +202,8 @@ export const handler = async function (event, context) {
                         
                         // 〖...〗 で囲まれた部分を除去
                         responseText = responseText.replace(/〖.*?〗/g, '');
+                        
+                        console.log('Processed response text successfully');
                     } else {
                         throw new Error('No text content found in assistant response');
                     }
@@ -180,7 +214,7 @@ export const handler = async function (event, context) {
                 throw new Error('No messages found in response');
             }
         } catch (error) {
-            console.error('Error processing response text:', error);
+            console.error('Error processing response text:', error.message);
             
             // 言語に応じたエラーメッセージ
             const errorMessages = {
@@ -197,13 +231,13 @@ export const handler = async function (event, context) {
         return {
             statusCode: 200,
             body: JSON.stringify({
-                response: responseText,
+                message: responseText,  // 'response'から'message'に変更
                 sessionId: threadId
             })
         };
 
     } catch (error) {
-        console.error('Unhandled error:', error);
+        console.error('Unhandled error:', error.message);
         return {
             statusCode: 500,
             body: JSON.stringify({ error: 'Internal Server Error' })
