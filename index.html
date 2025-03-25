@@ -430,6 +430,7 @@
     const sendButton = document.getElementById('send-button');
     const languageButtons = document.querySelectorAll('.language-btn');
     const languageCards = document.querySelectorAll('.language-card');
+    
     // 言語選択カード初期化
     languageCards.forEach(card => {
       card.addEventListener('click', () => {
@@ -437,6 +438,7 @@
         startChat(selectedLang);
       });
     });
+    
     // チャット開始処理
     function startChat(lang) {
       // 言語を設定
@@ -465,6 +467,7 @@
       // 入力フィールドにフォーカス
       userInput.focus();
     }
+    
     // 言語ボタンを更新
     function updateLanguageButtons(lang) {
       languageButtons.forEach(btn => {
@@ -475,6 +478,7 @@
         }
       });
     }
+    
     // 言語ボタンの初期化
     languageButtons.forEach(button => {
       button.addEventListener('click', () => {
@@ -486,6 +490,7 @@
         setLanguage(button.dataset.lang);
       });
     });
+    
     // 言語を設定する関数（チャット中の言語切り替え）
     function setLanguage(lang) {
       currentLanguage = lang;
@@ -513,6 +518,7 @@
       // 現在のステップに応じた質問を再表示
       askCurrentStepQuestion();
     }
+    
     // 現在のステップに応じた質問を表示
     function askCurrentStepQuestion() {
       const questions = {
@@ -540,6 +546,7 @@
         addMessage(stepQuestions[currentLanguage] || stepQuestions['en'], 'bot');
       }
     }
+    
     // メッセージをチャットに追加する関数
     function addMessage(text, sender) {
       const messageDiv = document.createElement('div');
@@ -559,12 +566,14 @@
       // 自動スクロール
       chatContainer.scrollTop = chatContainer.scrollHeight;
     }
+    
     // HTML特殊文字をエスケープする関数
     function escapeHtml(text) {
       const div = document.createElement('div');
       div.textContent = text;
       return div.innerHTML;
     }
+    
     // 入力中表示を追加
     function addTypingIndicator() {
       const typing = document.createElement('div');
@@ -583,6 +592,7 @@
       messagesContainer.appendChild(typing);
       chatContainer.scrollTop = chatContainer.scrollHeight;
     }
+    
     // 入力中表示を削除
     function removeTypingIndicator() {
       const typing = document.getElementById('typing-indicator');
@@ -590,6 +600,7 @@
         typing.remove();
       }
     }
+    
     // 次のステップに進む
     function goToNextStep(userText) {
       // 現在のステップに応じて情報を保存
@@ -612,6 +623,7 @@
           break;
       }
     }
+    
     // 最終プロンプトの生成と送信
     async function sendFinalPrompt() {
       // 言語ごとのプロンプトテンプレート
@@ -622,6 +634,7 @@
         'zh': `这是关于${collectedInfo.propertyId}的${collectedInfo.roomNumber}的问题。\n\n${collectedInfo.issue}`
       };
       const finalPrompt = promptTemplates[currentLanguage] || promptTemplates['en'];
+      
       // 処理中メッセージ
       const processingMessages = {
         'en': 'Thank you for providing the information. I am processing your request...',
@@ -630,9 +643,16 @@
         'zh': '感谢您提供信息。我正在处理您的请求...'
       };
       addMessage(processingMessages[currentLanguage] || processingMessages['en'], 'bot');
+      
       // 入力中表示
       addTypingIndicator();
+      
       try {
+        console.log('Sending request to API...');
+        console.log('Prompt:', finalPrompt);
+        console.log('Session ID:', sessionId);
+        console.log('Language:', currentLanguage);
+        
         // Netlify Function にリクエストを送信
         const response = await fetch('/api/chat', {
           method: 'POST',
@@ -645,9 +665,21 @@
             sessionId: sessionId
           })
         });
+        
+        // レスポンスのステータスコードを確認
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`API error: ${response.status} ${response.statusText}`);
+          console.error('Error details:', errorText);
+          throw new Error(`API error: ${response.status} ${response.statusText}`);
+        }
+        
         const data = await response.json();
+        console.log('Received API response:', data);
+        
         // 入力中表示を削除
         removeTypingIndicator();
+        
         if (data.error) {
           const errorMessages = {
             'en': `Error: ${data.error}`,
@@ -657,22 +689,43 @@
           };
           addMessage(errorMessages[currentLanguage] || errorMessages['en'], 'bot');
         } else {
-          // 成功時の応答を表示
-          addMessage(data.message, 'bot');
+          // data.messageをチェック
+          if (data.message) {
+            // 成功時の応答を表示
+            addMessage(data.message, 'bot');
+          } else {
+            // message プロパティがない場合のフォールバック
+            console.warn('No message property in response, checking for response property');
+            if (data.response) {
+              addMessage(data.response, 'bot');
+            } else {
+              throw new Error('No message or response property in API response');
+            }
+          }
+          
+          // セッションIDの更新（新規作成された場合）
+          if (data.sessionId) {
+            sessionId = data.sessionId;
+            console.log('Updated session ID:', sessionId);
+          }
         }
       } catch (error) {
+        console.error('Error calling API:', error);
         removeTypingIndicator();
+        
         const catchMessages = {
-          'en': 'An error occurred. Please try again later.',
-          'ko': '오류가 발생했습니다. 나중에 다시 시도해주세요.',
-          'ja': 'エラーが発生しました。しばらくしてからもう一度お試しください。',
-          'zh': '发生错误。请稍后再试。'
+          'en': 'An error occurred while connecting to the server. Please try again later.',
+          'ko': '서버에 연결하는 동안 오류가 발생했습니다. 나중에 다시 시도해주세요.',
+          'ja': 'サーバーへの接続中にエラーが発生しました。しばらくしてからもう一度お試しください。',
+          'zh': '连接到服务器时发生错误。请稍后再试。'
         };
         addMessage(catchMessages[currentLanguage] || catchMessages['en'], 'bot');
       }
     }
+    
     // 送信ボタンのイベントリスナー
     sendButton.addEventListener('click', handleSendMessage);
+    
     // Enterキーで送信
     userInput.addEventListener('keypress', function(event) {
       if (event.key === 'Enter') {
@@ -680,22 +733,83 @@
         handleSendMessage();
       }
     });
+    
     // ユーザーメッセージ送信処理
     function handleSendMessage() {
       const text = userInput.value.trim();
       if (!text) return;
+      
       // ユーザーメッセージを追加
       addMessage(text, 'user');
+      
       // 入力フィールドをクリア
       userInput.value = '';
+      
       // 次のステップに進む
       if (currentStep < QUESTION_STEPS.COMPLETED) {
         goToNextStep(text);
       } else {
-        // すでに最終プロンプト送信済みの場合は、任意の処理（例：新しいセッション開始の案内など）
-        addMessage('Session completed. Please refresh to start a new session.', 'bot');
+        // すでに最終プロンプト送信済みの場合は、APIに直接新しい質問を送信
+        sendFollowUpQuestion(text);
       }
     }
-  </script>
-</body>
-</html>
+    
+    // フォローアップ質問の送信
+    async function sendFollowUpQuestion(question) {
+      // 入力中表示
+      addTypingIndicator();
+      
+      try {
+        // Netlify Function にリクエストを送信
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            message: question,
+            language: currentLanguage,
+            sessionId: sessionId
+          })
+        });
+        
+        // レスポンスのステータスコードを確認
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status} ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        
+        // 入力中表示を削除
+        removeTypingIndicator();
+        
+        if (data.error) {
+          const errorMessages = {
+            'en': `Error: ${data.error}`,
+            'ko': `오류: ${data.error}`,
+            'ja': `エラー: ${data.error}`,
+            'zh': `错误: ${data.error}`
+          };
+          addMessage(errorMessages[currentLanguage] || errorMessages['en'], 'bot');
+        } else {
+          // 成功時の応答を表示 (message または response プロパティを使用)
+          if (data.message) {
+            addMessage(data.message, 'bot');
+          } else if (data.response) {
+            addMessage(data.response, 'bot');
+          } else {
+            throw new Error('No message or response property in API response');
+          }
+        }
+      } catch (error) {
+        console.error('Error calling API:', error);
+        removeTypingIndicator();
+        
+        const catchMessages = {
+          'en': 'An error occurred while connecting to the server. Please try again later.',
+          'ko': '서버에 연결하는 동안 오류가 발생했습니다. 나중에 다시 시도해주세요.',
+          'ja': 'サーバーへの接続中にエラーが発生しました。しばらくしてからもう一度お試しください。',
+          'zh': '连接到服务器时发生错误。请稍后再试。'
+        };
+        addMessage(catchMessages[currentLanguage] || catchMessages['en'], 'bot');
+      }
